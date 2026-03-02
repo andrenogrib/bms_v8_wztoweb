@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>BMS WZ Atlas</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700&family=Rajdhani:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script src="manifest.js"></script>
+</head>
+<body>
+  <div id="loadingScreen" class="loading-screen">
+    <div class="loading-card">
+      <p class="loading-kicker">WZ DATA LINK</p>
+      <h1 class="loading-title">Initializing Atlas</h1>
+      <p id="loadingText" class="loading-text">Preparing data stream...</p>
+      <div class="loading-track">
+        <div id="loadingBar" class="loading-bar"></div>
+      </div>
+    </div>
+  </div>
+
+  <main class="app-shell">
+    <header class="hero-panel">
+      <div>
+        <p class="hero-kicker">BMS V8 WZ WEB</p>
+        <h1 class="hero-title">WZ Atlas Control Deck</h1>
+        <p class="hero-subtitle">Catalog browser with tabs, filters and deep item details.</p>
+      </div>
+      <div class="metrics">
+        <article class="metric">
+          <span class="metric-label">Total Items</span>
+          <strong id="metricTotal">0</strong>
+        </article>
+        <article class="metric">
+          <span class="metric-label">Tabs</span>
+          <strong id="metricTabs">0</strong>
+        </article>
+        <article class="metric">
+          <span class="metric-label">Current Results</span>
+          <strong id="metricFiltered">0</strong>
+        </article>
+      </div>
+    </header>
+
+    <section class="tabs-panel" aria-label="Tabs">
+      <div id="tabStrip" class="tab-strip" role="tablist"></div>
+    </section>
+
+    <section class="controls-panel">
+      <label class="control search">
+        <span>Search</span>
+        <input id="searchInput" type="search" placeholder="ID, Name, Description, Info, Speak...">
+      </label>
+      <label class="control">
+        <span>Cash Filter</span>
+        <select id="cashFilter">
+          <option value="all">All</option>
+          <option value="cash">Cash only</option>
+          <option value="non-cash">Non-cash only</option>
+        </select>
+      </label>
+      <label class="control">
+        <span>Min Req Level</span>
+        <input id="minLevelInput" type="number" inputmode="numeric" min="0" placeholder="Any">
+      </label>
+      <label class="control">
+        <span>Sort</span>
+        <select id="sortSelect">
+          <option value="id-asc">ID ascending</option>
+          <option value="id-desc">ID descending</option>
+          <option value="name-asc">Name A-Z</option>
+          <option value="name-desc">Name Z-A</option>
+          <option value="level-desc">Req level high-low</option>
+          <option value="level-asc">Req level low-high</option>
+        </select>
+      </label>
+      <div class="control view-toggle">
+        <span>View</span>
+        <div class="toggle-set">
+          <button id="cardsViewBtn" class="toggle-btn is-active" type="button">Cards</button>
+          <button id="tableViewBtn" class="toggle-btn" type="button">Table</button>
+        </div>
+      </div>
+      <div class="control reset-wrap">
+        <span>Session</span>
+        <button id="resetFiltersBtn" class="ghost-btn" type="button">Reset filters</button>
+      </div>
+    </section>
+
+    <section class="workspace">
+      <section class="results-panel">
+        <header class="results-header">
+          <p id="resultsMeta" class="results-meta">Loading records...</p>
+        </header>
+        <div id="resultsRoot" class="results-root"></div>
+        <div class="load-more-row">
+          <button id="loadMoreBtn" class="load-more-btn" type="button">Load more</button>
+        </div>
+      </section>
+
+      <aside id="detailsPanel" class="details-panel">
+        <div class="details-empty">
+          <h2>Item Details</h2>
+          <p>Select an item to inspect all exported fields.</p>
+        </div>
+      </aside>
+    </section>
+  </main>
+
+  <noscript>
+    <div class="noscript-banner">This page requires JavaScript enabled.</div>
+  </noscript>
+
+  <script src="app.js"></script>
+</body>
+</html>
