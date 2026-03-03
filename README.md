@@ -38,6 +38,18 @@ Open:
 
 `http://127.0.0.1:8099`
 
+## Deploy on GitHub Pages
+
+This repository includes a workflow that publishes the `WEB/` folder on every push to `main`.
+
+Public URL:
+
+`https://andrenogrib.github.io/bms_v8_wztoweb/`
+
+If this is the first deploy, set it once in GitHub:
+
+- `Settings` -> `Pages` -> `Build and deployment` -> `Source: GitHub Actions`
+
 ## URL State
 
 The interface syncs query parameters so links can be shared with current state:
