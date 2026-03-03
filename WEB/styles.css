@@ -256,7 +256,7 @@ input::placeholder {
   display: grid;
   margin-top: 12px;
   gap: 12px;
-  grid-template-columns: minmax(0, 1.45fr) minmax(430px, 1.15fr);
+  grid-template-columns: minmax(0, 1.3fr) minmax(520px, 1.25fr);
   align-items: start;
 }
 
@@ -631,6 +631,128 @@ input::placeholder {
   line-height: 1.1;
 }
 
+.maplink-state {
+  margin: 8px 0 0;
+  color: #516a87;
+  font-size: 0.9rem;
+}
+
+.maplink-state.is-error {
+  color: #9a2f2f;
+}
+
+.maplink-state-detail {
+  margin: 6px 0 0;
+  color: #5f6f83;
+  font-size: 0.82rem;
+}
+
+.maplink-grid {
+  margin-top: 8px;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.maplink-block {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  min-width: 0;
+}
+
+.maplink-block-title {
+  margin: 0;
+  color: #435d7c;
+  font-size: 0.82rem;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.maplink-empty {
+  margin: 8px 0 0;
+  color: #5f7591;
+  font-size: 0.88rem;
+}
+
+.maplink-table-wrap {
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow-y: auto;
+  overflow-x: hidden;
+  max-height: 320px;
+  background: #fff;
+}
+
+.maplink-table {
+  width: 100%;
+  min-width: 0;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.maplink-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: #f7fbff;
+  color: #4f6784;
+  text-align: left;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  border-bottom: 1px solid var(--line);
+  padding: 7px 6px;
+}
+
+.maplink-table tbody tr {
+  border-bottom: 1px solid #edf2f8;
+}
+
+.maplink-table td {
+  padding: 7px 6px;
+  font-size: 0.85rem;
+  vertical-align: top;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.maplink-sub {
+  margin-top: 2px;
+  color: #6a7f99;
+  font-size: 0.76rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.maplink-info {
+  color: #5f7792;
+}
+
+.details-nav-btn {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: transparent;
+  color: #235e9f;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 600;
+  text-align: left;
+  max-width: 100%;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+}
+
+.details-nav-btn:hover {
+  text-decoration: underline;
+}
+
 .empty-state {
   border: 1px dashed #c7d6e8;
   border-radius: var(--radius-md);
@@ -722,6 +844,10 @@ input::placeholder {
     min-height: 0;
     max-height: none;
     overflow: visible;
+  }
+
+  .maplink-grid {
+    grid-template-columns: 1fr;
   }
 }
 

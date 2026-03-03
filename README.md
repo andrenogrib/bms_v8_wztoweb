@@ -10,6 +10,7 @@ This project transforms exported WZ data into a simple and functional static web
 - Global search focused on ID and name
 - Clean table for consultation
 - Details panel with parsed `Info` fields and raw exported fields
+- Cross-reference panels (`Reward` drops and `Map` links)
 - Progressive loading for good performance on large datasets
 
 The app is fully static (HTML/CSS/JS), so it can run on localhost and later be deployed to any static hosting provider.
@@ -21,6 +22,8 @@ The app is fully static (HTML/CSS/JS), so it can run on localhost and later be d
 - `WEB/app.js`: data loading, filtering, rendering and state sync
 - `WEB/manifest.js`: list of exported data scripts to load
 - `WEB/<Tab>/data.js`: exported tab data loaded at runtime
+- `WEB/Reward/drop-index.json`: lightweight index used for item/mob drop relation
+- `WEB/Map/map-links.json`: lightweight index used for map/mob/npc relation
 
 ## Run Locally
 
@@ -86,3 +89,35 @@ Generated files:
   - chance and quantity
 - Data source: `WEB/Reward/drop-index.json`.
 - If the file is missing, the panel shows a load error message without breaking the rest of the app.
+
+## MAP Cross (Map <-> Mob/Npc)
+
+Use this to generate map life references from raw `MAP/*.img` and link with `WEB` names/icons.
+
+Prerequisite: keep a local clone of `Harepacker-resurrected` in `tmp_harepacker_clone` (used for MapleLib reference).
+
+### 1. Build extractor
+
+```powershell
+dotnet build tools\MapCrossBuilder\MapCrossBuilder.csproj -c Release
+```
+
+### 2. Generate map link index
+
+```powershell
+dotnet run --project tools\MapCrossBuilder\MapCrossBuilder.csproj -c Release -- MAP WEB WEB\Map\map-links.json
+```
+
+Generated file:
+
+- `WEB/Map/map-links.json`: map contents and reverse index
+  - `maps`: map -> mobs + npcs
+  - `mobs`: mob -> maps
+  - `npcs`: npc -> maps
+
+### UI behavior
+
+- In tabs `Map*`: selecting a map shows **Conteudo do mapa** (mobs + NPCs).
+- In tab `Mob`: selecting a mob shows **Aparece em mapas**.
+- In tab `Npc`: selecting an NPC shows **Aparece em mapas**.
+- Entries are clickable for quick navigation across related records.

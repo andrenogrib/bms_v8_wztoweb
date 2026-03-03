@@ -2,6 +2,7 @@
   "use strict";
 
   const REWARD_DROP_INDEX_PATH = "Reward/drop-index.json";
+  const MAP_LINK_INDEX_PATH = "Map/map-links.json";
 
   const DEFAULTS = {
     activeTab: "ALL",
@@ -23,12 +24,22 @@
     loadedScripts: new Set(),
     itemPreviewById: {},
     mobLookupById: {},
+    mapRowKeyById: {},
+    mobRowKeyById: {},
+    npcRowKeyById: {},
     rewardDropsByMob: null,
     rewardDropsByItem: null,
     rewardMeta: null,
     rewardStatus: "idle",
     rewardError: "",
     rewardPromise: null,
+    mapLinksByMap: null,
+    mapLinksByMob: null,
+    mapLinksByNpc: null,
+    mapLinksMeta: null,
+    mapLinksStatus: "idle",
+    mapLinksError: "",
+    mapLinksPromise: null,
   };
 
   const elements = {};
@@ -136,6 +147,8 @@
 
     elements.resultsRoot.addEventListener("click", onResultSelection);
     elements.resultsRoot.addEventListener("keydown", onResultSelectionKeyboard);
+    elements.detailsPanel.addEventListener("click", onDetailsNavigationClick);
+    elements.detailsPanel.addEventListener("keydown", onDetailsNavigationKeyboard);
   }
 
   async function loadAllData() {
@@ -150,6 +163,10 @@
     state.tabPreviews = buildTabPreviews(rows, state.tabs);
     state.itemPreviewById = buildItemPreviewIndex(rows);
     state.mobLookupById = buildMobLookup(rows);
+    const navLookups = buildNavigationLookups(rows);
+    state.mapRowKeyById = navLookups.mapById;
+    state.mobRowKeyById = navLookups.mobById;
+    state.npcRowKeyById = navLookups.npcById;
 
     if (state.activeTab !== "ALL" && !Object.prototype.hasOwnProperty.call(state.tabCounts, state.activeTab)) {
       state.activeTab = "ALL";
@@ -281,6 +298,43 @@
       }
     }
     return index;
+  }
+
+  function buildNavigationLookups(rows) {
+    const mapById = {};
+    const mobById = {};
+    const npcById = {};
+
+    for (const row of rows) {
+      if (!row) {
+        continue;
+      }
+
+      if (row.tab === "Mob") {
+        const mobId = normalizeMobId(row.id);
+        if (mobId && !Object.prototype.hasOwnProperty.call(mobById, mobId)) {
+          mobById[mobId] = row.key;
+        }
+        continue;
+      }
+
+      if (row.tab === "Npc") {
+        const npcId = normalizeMobId(row.id);
+        if (npcId && !Object.prototype.hasOwnProperty.call(npcById, npcId)) {
+          npcById[npcId] = row.key;
+        }
+        continue;
+      }
+
+      if (isMapTab(row.tab)) {
+        const mapId = normalizeMapId(row.id);
+        if (mapId && !Object.prototype.hasOwnProperty.call(mapById, mapId)) {
+          mapById[mapId] = row.key;
+        }
+      }
+    }
+
+    return { mapById, mobById, npcById };
   }
 
   function applyFilters(options) {
@@ -560,6 +614,18 @@
       wrapper.appendChild(createDetailsSection("Campos brutos", rawEntries));
     }
 
+    if (isMapTab(selected.tab)) {
+      wrapper.appendChild(createMapContentsSection(selected));
+    }
+
+    if (selected.tab === "Mob") {
+      wrapper.appendChild(createMobMapSection(selected));
+    }
+
+    if (selected.tab === "Npc") {
+      wrapper.appendChild(createNpcMapSection(selected));
+    }
+
     if (selected.tab === "Mob") {
       wrapper.appendChild(createMobDropSection(selected));
     }
@@ -569,6 +635,270 @@
     }
 
     elements.detailsPanel.replaceChildren(wrapper);
+  }
+
+  function createMapContentsSection(selected) {
+    const section = document.createElement("section");
+    section.className = "details-section maplink-section";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Conteudo do mapa";
+    section.appendChild(heading);
+
+    if (!ensureMapLinksReady(section)) {
+      return section;
+    }
+
+    const mapNode = getMapLinksForMap(selected.id);
+    if (!mapNode) {
+      const text = document.createElement("p");
+      text.className = "maplink-state";
+      text.textContent = "Sem referencia de mobs/NPCs para este mapa.";
+      section.appendChild(text);
+      return section;
+    }
+
+    const meta = document.createElement("p");
+    meta.className = "maplink-state";
+    meta.textContent =
+      "Mobs: " + formatNumber(mapNode.mobCount) + " | NPCs: " + formatNumber(mapNode.npcCount) + ".";
+    section.appendChild(meta);
+
+    const grid = document.createElement("div");
+    grid.className = "maplink-grid";
+    grid.append(
+      createMapEntityBlock("Mobs", mapNode.mobs, "Mob", "Nenhum mob registrado neste mapa."),
+      createMapEntityBlock("NPCs", mapNode.npcs, "Npc", "Nenhum NPC registrado neste mapa.")
+    );
+    section.appendChild(grid);
+
+    return section;
+  }
+
+  function createMobMapSection(selected) {
+    const section = document.createElement("section");
+    section.className = "details-section maplink-section";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Aparece em mapas";
+    section.appendChild(heading);
+
+    if (!ensureMapLinksReady(section)) {
+      return section;
+    }
+
+    const refs = getMapRefsForMob(selected.id);
+    if (!refs.length) {
+      const text = document.createElement("p");
+      text.className = "maplink-state";
+      text.textContent = "Sem referencia de mapa para este mob.";
+      section.appendChild(text);
+      return section;
+    }
+
+    const meta = document.createElement("p");
+    meta.className = "maplink-state";
+    meta.textContent = formatNumber(refs.length) + " mapa(s).";
+    section.appendChild(meta);
+
+    section.appendChild(createMapReferenceTable(refs));
+    return section;
+  }
+
+  function createNpcMapSection(selected) {
+    const section = document.createElement("section");
+    section.className = "details-section maplink-section";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Aparece em mapas";
+    section.appendChild(heading);
+
+    if (!ensureMapLinksReady(section)) {
+      return section;
+    }
+
+    const refs = getMapRefsForNpc(selected.id);
+    if (!refs.length) {
+      const text = document.createElement("p");
+      text.className = "maplink-state";
+      text.textContent = "Sem referencia de mapa para este NPC.";
+      section.appendChild(text);
+      return section;
+    }
+
+    const meta = document.createElement("p");
+    meta.className = "maplink-state";
+    meta.textContent = formatNumber(refs.length) + " mapa(s).";
+    section.appendChild(meta);
+
+    section.appendChild(createMapReferenceTable(refs));
+    return section;
+  }
+
+  function createMapEntityBlock(title, rows, navTab, emptyText) {
+    const block = document.createElement("article");
+    block.className = "maplink-block";
+
+    const head = document.createElement("h4");
+    head.className = "maplink-block-title";
+    head.textContent = title + " (" + formatNumber(Array.isArray(rows) ? rows.length : 0) + ")";
+    block.appendChild(head);
+
+    const list = Array.isArray(rows) ? rows : [];
+    if (!list.length) {
+      const empty = document.createElement("p");
+      empty.className = "maplink-empty";
+      empty.textContent = emptyText;
+      block.appendChild(empty);
+      return block;
+    }
+
+    const wrap = document.createElement("div");
+    wrap.className = "maplink-table-wrap";
+
+    const table = document.createElement("table");
+    table.className = "maplink-table";
+
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    for (const label of ["#", "ICO", "ID", "Nome", "Info"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      hr.appendChild(th);
+    }
+    thead.appendChild(hr);
+
+    const tbody = document.createElement("tbody");
+    for (let i = 0; i < list.length; i += 1) {
+      const row = list[i];
+      const tr = document.createElement("tr");
+
+      const idx = document.createElement("td");
+      idx.textContent = String(i + 1);
+
+      const ico = document.createElement("td");
+      ico.className = "drop-ico-cell";
+      ico.appendChild(createThumbNode(asText(row && row.preview), "drop-thumb"));
+
+      const idCell = document.createElement("td");
+      idCell.className = "table-id";
+      idCell.textContent = asText(row && row.id) || "-";
+
+      const nameCell = document.createElement("td");
+      const label = asText(row && row.name) || "(" + navTab.toLowerCase() + " desconhecido)";
+      nameCell.appendChild(createDetailsNavButton(navTab, asText(row && row.id), label));
+
+      const infoCell = document.createElement("td");
+      infoCell.className = "maplink-info";
+      const infoText = navTab === "Mob" ? formatMobMeta(row) : "";
+      infoCell.textContent = infoText || "-";
+
+      tr.append(idx, ico, idCell, nameCell, infoCell);
+      tbody.appendChild(tr);
+    }
+
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+    block.appendChild(wrap);
+    return block;
+  }
+
+  function createMapReferenceTable(rows) {
+    const wrap = document.createElement("div");
+    wrap.className = "maplink-table-wrap";
+
+    const table = document.createElement("table");
+    table.className = "maplink-table";
+
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    for (const label of ["#", "ICO", "Map ID", "Mapa", "Info"]) {
+      const th = document.createElement("th");
+      th.textContent = label;
+      hr.appendChild(th);
+    }
+    thead.appendChild(hr);
+
+    const tbody = document.createElement("tbody");
+    for (let i = 0; i < rows.length; i += 1) {
+      const row = rows[i];
+      const tr = document.createElement("tr");
+
+      const idx = document.createElement("td");
+      idx.textContent = String(i + 1);
+
+      const ico = document.createElement("td");
+      ico.className = "drop-ico-cell";
+      ico.appendChild(createThumbNode(asText(row && row.preview), "drop-thumb"));
+
+      const mapId = normalizeMapId(row && row.mapId);
+      const mapIdCell = document.createElement("td");
+      mapIdCell.className = "table-id";
+      mapIdCell.textContent = mapId || "-";
+
+      const mapCell = document.createElement("td");
+      const mapName = asText(row && row.mapName) || mapId || "(mapa desconhecido)";
+      mapCell.appendChild(createDetailsNavButton("Map", mapId, mapName));
+      const street = asText(row && row.streetName);
+      if (street) {
+        const streetMeta = document.createElement("div");
+        streetMeta.className = "maplink-sub";
+        streetMeta.textContent = street;
+        mapCell.appendChild(streetMeta);
+      }
+
+      const infoCell = document.createElement("td");
+      infoCell.className = "maplink-info";
+      infoCell.textContent = formatMapRefMeta(row);
+
+      tr.append(idx, ico, mapIdCell, mapCell, infoCell);
+      tbody.appendChild(tr);
+    }
+
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+    return wrap;
+  }
+
+  function createDetailsNavButton(tab, id, label) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "details-nav-btn";
+    button.setAttribute("data-nav-tab", asText(tab));
+    button.setAttribute("data-nav-id", asText(id));
+    button.textContent = label;
+    button.title = label;
+    return button;
+  }
+
+  function ensureMapLinksReady(section) {
+    if (state.mapLinksStatus === "idle") {
+      ensureMapLinksLoaded();
+    }
+
+    if (state.mapLinksStatus === "loading" || state.mapLinksStatus === "idle") {
+      const text = document.createElement("p");
+      text.className = "maplink-state";
+      text.textContent = "Carregando dados de mapa...";
+      section.appendChild(text);
+      return false;
+    }
+
+    if (state.mapLinksStatus === "error") {
+      const text = document.createElement("p");
+      text.className = "maplink-state is-error";
+      text.textContent = "Nao foi possivel carregar " + MAP_LINK_INDEX_PATH + ".";
+      section.appendChild(text);
+      if (state.mapLinksError) {
+        const detail = document.createElement("p");
+        detail.className = "maplink-state-detail";
+        detail.textContent = state.mapLinksError;
+        section.appendChild(detail);
+      }
+      return false;
+    }
+
+    return true;
   }
 
   function createMobDropSection(selected) {
@@ -799,6 +1129,81 @@
     return section;
   }
 
+  function ensureMapLinksLoaded() {
+    if (state.mapLinksStatus === "ready") {
+      return Promise.resolve();
+    }
+    if (state.mapLinksStatus === "loading" && state.mapLinksPromise) {
+      return state.mapLinksPromise;
+    }
+    if (state.mapLinksStatus === "error") {
+      return Promise.reject(new Error(state.mapLinksError || "load failed"));
+    }
+
+    state.mapLinksStatus = "loading";
+    state.mapLinksError = "";
+
+    state.mapLinksPromise = fetch(MAP_LINK_INDEX_PATH, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
+        return response.json();
+      })
+      .then((payload) => {
+        const mapMap = payload && typeof payload.maps === "object" && payload.maps ? payload.maps : {};
+        const mobMap = payload && typeof payload.mobs === "object" && payload.mobs ? payload.mobs : {};
+        const npcMap = payload && typeof payload.npcs === "object" && payload.npcs ? payload.npcs : {};
+        state.mapLinksByMap = mapMap;
+        state.mapLinksByMob = mobMap;
+        state.mapLinksByNpc = npcMap;
+        state.mapLinksMeta = payload && payload.meta ? payload.meta : null;
+        state.mapLinksStatus = "ready";
+      })
+      .catch((error) => {
+        state.mapLinksByMap = null;
+        state.mapLinksByMob = null;
+        state.mapLinksByNpc = null;
+        state.mapLinksMeta = null;
+        state.mapLinksStatus = "error";
+        state.mapLinksError = asText(error && error.message ? error.message : error);
+        throw error;
+      })
+      .finally(() => {
+        state.mapLinksPromise = null;
+        renderDetails();
+      });
+
+    return state.mapLinksPromise;
+  }
+
+  function getMapLinksForMap(mapId) {
+    if (state.mapLinksStatus !== "ready" || !state.mapLinksByMap) {
+      return null;
+    }
+    const normalized = normalizeMapId(mapId);
+    const node = state.mapLinksByMap[normalized];
+    return node && typeof node === "object" ? node : null;
+  }
+
+  function getMapRefsForMob(mobId) {
+    if (state.mapLinksStatus !== "ready" || !state.mapLinksByMob) {
+      return [];
+    }
+    const normalized = normalizeMobId(mobId);
+    const refs = state.mapLinksByMob[normalized];
+    return Array.isArray(refs) ? refs : [];
+  }
+
+  function getMapRefsForNpc(npcId) {
+    if (state.mapLinksStatus !== "ready" || !state.mapLinksByNpc) {
+      return [];
+    }
+    const normalized = normalizeMobId(npcId);
+    const refs = state.mapLinksByNpc[normalized];
+    return Array.isArray(refs) ? refs : [];
+  }
+
   function ensureRewardDropsLoaded() {
     if (state.rewardStatus === "ready") {
       return Promise.resolve();
@@ -945,6 +1350,26 @@
     return extras.length ? extras.join(" | ") : "-";
   }
 
+  function formatMapRefMeta(ref) {
+    const extras = [];
+    const tab = asText(ref && ref.tab);
+    if (tab) {
+      extras.push("tab " + tab);
+    }
+
+    const mobCount = parseIntOrNull(ref && ref.mobCount);
+    if (mobCount !== null) {
+      extras.push("mobs " + formatNumber(mobCount));
+    }
+
+    const npcCount = parseIntOrNull(ref && ref.npcCount);
+    if (npcCount !== null) {
+      extras.push("npcs " + formatNumber(npcCount));
+    }
+
+    return extras.length ? extras.join(" | ") : "-";
+  }
+
   function formatMobListMeta(row) {
     if (!row || row.tab !== "Mob") {
       return "";
@@ -977,12 +1402,24 @@
     return raw.padStart(7, "0");
   }
 
+  function normalizeMapId(id) {
+    const raw = asText(id).trim();
+    if (!/^\d+$/.test(raw)) {
+      return raw;
+    }
+    return raw.padStart(9, "0");
+  }
+
   function normalizeItemId(id) {
     const raw = asText(id).trim();
     if (!/^\d+$/.test(raw)) {
       return raw;
     }
     return raw.padStart(8, "0");
+  }
+
+  function isMapTab(tab) {
+    return /^Map\d+$/i.test(asText(tab).trim());
   }
 
   function formatDropChance(prob, probRaw) {
@@ -1090,6 +1527,71 @@
     elements.metricTotal.textContent = formatNumber(state.allRows.length);
     elements.metricTabs.textContent = String(state.tabs.length);
     elements.metricFiltered.textContent = formatNumber(state.filteredRows.length);
+  }
+
+  function onDetailsNavigationClick(event) {
+    const target = event.target.closest("button[data-nav-tab][data-nav-id]");
+    if (!target || !elements.detailsPanel.contains(target)) {
+      return;
+    }
+    const tab = asText(target.getAttribute("data-nav-tab"));
+    const id = asText(target.getAttribute("data-nav-id"));
+    if (!tab || !id) {
+      return;
+    }
+    navigateToLinkedRecord(tab, id);
+  }
+
+  function onDetailsNavigationKeyboard(event) {
+    if (event.key !== "Enter" && event.key !== " ") {
+      return;
+    }
+    const target = event.target.closest("button[data-nav-tab][data-nav-id]");
+    if (!target || !elements.detailsPanel.contains(target)) {
+      return;
+    }
+    const tab = asText(target.getAttribute("data-nav-tab"));
+    const id = asText(target.getAttribute("data-nav-id"));
+    if (!tab || !id) {
+      return;
+    }
+    event.preventDefault();
+    navigateToLinkedRecord(tab, id);
+  }
+
+  function navigateToLinkedRecord(tab, id) {
+    const tabName = asText(tab).trim();
+    const rawId = asText(id).trim();
+    let key = "";
+
+    if (tabName === "Map") {
+      key = asText(state.mapRowKeyById[normalizeMapId(rawId)]);
+    } else if (tabName === "Mob") {
+      key = asText(state.mobRowKeyById[normalizeMobId(rawId)]);
+    } else if (tabName === "Npc") {
+      key = asText(state.npcRowKeyById[normalizeMobId(rawId)]);
+    }
+
+    if (!key) {
+      return;
+    }
+
+    let targetRow = null;
+    for (const row of state.allRows) {
+      if (row.key === key) {
+        targetRow = row;
+        break;
+      }
+    }
+    if (!targetRow) {
+      return;
+    }
+
+    state.activeTab = targetRow.tab;
+    state.query = "";
+    state.selectedKey = key;
+    renderControlValues();
+    applyFilters({ resetVisible: true, keepSelection: true });
   }
 
   function onResultSelection(event) {
