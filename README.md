@@ -1,15 +1,14 @@
-# BMS V8 WZ To Web
+# BMS V8 WZ Database
 
-Web catalog viewer for MapleStory WZ export data, focused on documentation and fast browsing.
+Simple web database viewer for MapleStory WZ export data.
 
 ## Overview
 
-This project transforms exported WZ data into a modern static web interface with:
+This project transforms exported WZ data into a simple and functional static web interface with:
 
 - Tab navigation for all data groups (`Accessory`, `Mob`, `Npc`, `Skill`, etc.)
-- Global search across ID, name and metadata fields
-- Advanced filters (`cash`, minimum required level, sorting)
-- Card view and table view
+- Global search focused on ID and name
+- Clean table for consultation
 - Details panel with parsed `Info` fields and raw exported fields
 - Progressive loading for good performance on large datasets
 
@@ -38,14 +37,10 @@ Open:
 
 ## URL State
 
-The interface syncs filters into query parameters so links can be shared with current state:
+The interface syncs query parameters so links can be shared with current state:
 
 - `tab`
 - `q`
-- `cash`
-- `minlvl`
-- `sort`
-- `view`
 
 ## Notes
 

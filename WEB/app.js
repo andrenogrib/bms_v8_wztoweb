@@ -3,10 +3,6 @@
 
   const DEFAULTS = {
     activeTab: "ALL",
-    cashFilter: "all",
-    minLevel: "",
-    sortBy: "id-asc",
-    viewMode: "cards",
     query: "",
   };
 
@@ -14,15 +10,12 @@
     manifest: Array.isArray(window.GM_MANIFEST) ? window.GM_MANIFEST.slice() : [],
     tabs: [],
     tabCounts: { ALL: 0 },
+    tabPreviews: {},
     allRows: [],
     filteredRows: [],
     activeTab: DEFAULTS.activeTab,
-    cashFilter: DEFAULTS.cashFilter,
-    minLevel: DEFAULTS.minLevel,
-    sortBy: DEFAULTS.sortBy,
-    viewMode: DEFAULTS.viewMode,
     query: DEFAULTS.query,
-    pageSize: 180,
+    pageSize: 250,
     visibleCount: 0,
     selectedKey: "",
     loadedScripts: new Set(),
@@ -38,8 +31,8 @@
     hydrateStateFromUrl();
     initializeTabsFromManifest();
     bindEvents();
-    renderControlValues();
     renderTabs();
+    renderControlValues();
     updateMetrics();
     setLoadingProgress(0, state.manifest.length, "");
     loadAllData().catch(handleFatalError);
@@ -56,11 +49,6 @@
 
     elements.tabStrip = byId("tabStrip");
     elements.searchInput = byId("searchInput");
-    elements.cashFilter = byId("cashFilter");
-    elements.minLevelInput = byId("minLevelInput");
-    elements.sortSelect = byId("sortSelect");
-    elements.cardsViewBtn = byId("cardsViewBtn");
-    elements.tableViewBtn = byId("tableViewBtn");
     elements.resetFiltersBtn = byId("resetFiltersBtn");
 
     elements.resultsMeta = byId("resultsMeta");
@@ -73,26 +61,9 @@
     const params = new URLSearchParams(window.location.search);
     const query = asText(params.get("q")).trim();
     const tab = asText(params.get("tab")).trim();
-    const cash = asText(params.get("cash")).trim();
-    const minlvl = asText(params.get("minlvl")).trim();
-    const sort = asText(params.get("sort")).trim();
-    const view = asText(params.get("view")).trim();
 
     state.query = query || DEFAULTS.query;
     state.activeTab = tab || DEFAULTS.activeTab;
-    state.cashFilter = ["all", "cash", "non-cash"].includes(cash) ? cash : DEFAULTS.cashFilter;
-    state.minLevel = /^\d+$/.test(minlvl) ? minlvl : DEFAULTS.minLevel;
-    state.sortBy = [
-      "id-asc",
-      "id-desc",
-      "name-asc",
-      "name-desc",
-      "level-desc",
-      "level-asc",
-    ].includes(sort)
-      ? sort
-      : DEFAULTS.sortBy;
-    state.viewMode = ["cards", "table"].includes(view) ? view : DEFAULTS.viewMode;
   }
 
   function initializeTabsFromManifest() {
@@ -111,8 +82,10 @@
 
     state.tabs = tabs;
     state.tabCounts = { ALL: 0 };
+    state.tabPreviews = {};
     for (const tab of tabs) {
       state.tabCounts[tab] = 0;
+      state.tabPreviews[tab] = "";
     }
   }
 
@@ -120,49 +93,10 @@
     const onSearch = debounce((value) => {
       state.query = asText(value).trim();
       applyFilters({ resetVisible: true, keepSelection: true });
-    }, 130);
+    }, 120);
 
     elements.searchInput.addEventListener("input", (event) => {
       onSearch(event.target.value);
-    });
-
-    elements.cashFilter.addEventListener("change", (event) => {
-      state.cashFilter = asText(event.target.value) || DEFAULTS.cashFilter;
-      applyFilters({ resetVisible: true, keepSelection: true });
-    });
-
-    const onLevel = debounce((value) => {
-      const clean = asText(value).trim();
-      state.minLevel = /^\d+$/.test(clean) ? clean : "";
-      elements.minLevelInput.value = state.minLevel;
-      applyFilters({ resetVisible: true, keepSelection: true });
-    }, 160);
-
-    elements.minLevelInput.addEventListener("input", (event) => {
-      onLevel(event.target.value);
-    });
-
-    elements.sortSelect.addEventListener("change", (event) => {
-      state.sortBy = asText(event.target.value) || DEFAULTS.sortBy;
-      applyFilters({ resetVisible: true, keepSelection: true });
-    });
-
-    elements.cardsViewBtn.addEventListener("click", () => {
-      if (state.viewMode !== "cards") {
-        state.viewMode = "cards";
-        renderViewToggle();
-        renderResults();
-        syncUrlState();
-      }
-    });
-
-    elements.tableViewBtn.addEventListener("click", () => {
-      if (state.viewMode !== "table") {
-        state.viewMode = "table";
-        renderViewToggle();
-        renderResults();
-        syncUrlState();
-      }
     });
 
     elements.resetFiltersBtn.addEventListener("click", () => {
@@ -196,15 +130,16 @@
 
   async function loadAllData() {
     if (!state.manifest.length) {
-      throw new Error("manifest.js does not expose GM_MANIFEST entries.");
+      throw new Error("manifest.js nao contem entradas em GM_MANIFEST.");
     }
 
     await loadScriptsWithConcurrency(state.manifest, 4, setLoadingProgress);
-    const normalizedRows = normalizeAllRows(window.GM_EXPORTS || {});
-    state.allRows = normalizedRows;
-    state.tabCounts = buildTabCounts(normalizedRows, state.tabs);
+    const rows = normalizeAllRows(window.GM_EXPORTS || {});
+    state.allRows = rows;
+    state.tabCounts = buildTabCounts(rows, state.tabs);
+    state.tabPreviews = buildTabPreviews(rows, state.tabs);
 
-    if (state.activeTab !== "ALL" && !state.tabCounts[state.activeTab]) {
+    if (state.activeTab !== "ALL" && !Object.prototype.hasOwnProperty.call(state.tabCounts, state.activeTab)) {
       state.activeTab = "ALL";
     }
 
@@ -230,28 +165,20 @@
     const fields = rawRow && typeof rawRow.fields === "object" ? rawRow.fields : {};
     const tab = asText(rawRow.tab || fallbackTab || "Unknown");
     const id = asText(rawRow.id || fields.ID || "");
-    const fallbackName = fields.Name || fields.MapName || fields.StreetName || id || "Unnamed";
+    const fallbackName = fields.Name || fields.MapName || fields.StreetName || id || "Sem nome";
     const name = asText(rawRow.name || fallbackName);
     const preview = asText(rawRow.preview || firstImagePath(rawRow.images));
     const infoRaw = asText(fields.Info || "");
     const parsedInfo = parseInfoPairs(infoRaw);
-    const reqLevel = toNumber(parsedInfo.map.reqLevel);
-    const cashValue = toNumber(parsedInfo.map.cash);
-    const isCash = cashValue === 1;
-    const description = asText(fields.Description || fields.Speak || "");
 
-    const searchCorpus = [
-      tab,
-      id,
-      name,
-      asText(rawRow.search),
-      description,
-      asText(fields.Name),
-      asText(fields.MapName),
-      asText(fields.StreetName),
-      asText(fields.Level),
-      infoRaw,
-    ]
+    const description =
+      asText(fields.Description) ||
+      asText(fields.Speak) ||
+      asText(fields.MapName) ||
+      asText(fields.StreetName) ||
+      asText(fields.Info);
+
+    const searchCorpus = [id, name, asText(fields.Name), asText(fields.MapName), asText(fields.StreetName)]
       .join(" ")
       .toLowerCase();
 
@@ -262,12 +189,9 @@
       name,
       fields,
       preview,
-      hasPreview: Boolean(preview),
+      description,
       infoMap: parsedInfo.map,
       infoNotes: parsedInfo.notes,
-      reqLevel,
-      isCash,
-      description,
       searchCorpus,
     };
   }
@@ -278,7 +202,7 @@
       counts[tab] = 0;
     }
     for (const row of rows) {
-      if (!counts[row.tab]) {
+      if (!Object.prototype.hasOwnProperty.call(counts, row.tab)) {
         counts[row.tab] = 0;
       }
       counts[row.tab] += 1;
@@ -286,29 +210,36 @@
     return counts;
   }
 
+  function buildTabPreviews(rows, tabs) {
+    const previews = {};
+    for (const tab of tabs) {
+      previews[tab] = "";
+    }
+    for (const row of rows) {
+      if (!row.preview) {
+        continue;
+      }
+      if (!Object.prototype.hasOwnProperty.call(previews, row.tab)) {
+        previews[row.tab] = row.preview;
+        continue;
+      }
+      if (!previews[row.tab]) {
+        previews[row.tab] = row.preview;
+      }
+    }
+    return previews;
+  }
+
   function applyFilters(options) {
     const resetVisible = Boolean(options && options.resetVisible);
     const keepSelection = !(options && options.keepSelection === false);
     const previousSelection = state.selectedKey;
     const query = state.query.toLowerCase();
-    const minimumLevel = state.minLevel === "" ? null : Number(state.minLevel);
 
     const filtered = [];
     for (const row of state.allRows) {
       if (state.activeTab !== "ALL" && row.tab !== state.activeTab) {
         continue;
-      }
-      if (state.cashFilter === "cash" && !row.isCash) {
-        continue;
-      }
-      if (state.cashFilter === "non-cash" && row.isCash) {
-        continue;
-      }
-      if (minimumLevel !== null) {
-        const level = row.reqLevel === null ? 0 : row.reqLevel;
-        if (level < minimumLevel) {
-          continue;
-        }
       }
       if (query && !row.searchCorpus.includes(query)) {
         continue;
@@ -316,8 +247,7 @@
       filtered.push(row);
     }
 
-    state.filteredRows = sortRows(filtered, state.sortBy);
-
+    state.filteredRows = sortRows(filtered);
     if (resetVisible) {
       state.visibleCount = Math.min(state.pageSize, state.filteredRows.length);
     } else {
@@ -341,36 +271,13 @@
     syncUrlState();
   }
 
-  function sortRows(rows, mode) {
-    const sorted = rows.slice();
-    sorted.sort((a, b) => {
-      if (mode === "id-desc") {
-        return compareIds(b.id, a.id);
-      }
-      if (mode === "name-asc") {
-        return a.name.localeCompare(b.name, "pt-BR", { sensitivity: "base" }) || compareIds(a.id, b.id);
-      }
-      if (mode === "name-desc") {
-        return b.name.localeCompare(a.name, "pt-BR", { sensitivity: "base" }) || compareIds(a.id, b.id);
-      }
-      if (mode === "level-desc") {
-        const levelA = a.reqLevel === null ? -1 : a.reqLevel;
-        const levelB = b.reqLevel === null ? -1 : b.reqLevel;
-        return levelB - levelA || compareIds(a.id, b.id);
-      }
-      if (mode === "level-asc") {
-        const levelA = a.reqLevel === null ? -1 : a.reqLevel;
-        const levelB = b.reqLevel === null ? -1 : b.reqLevel;
-        return levelA - levelB || compareIds(a.id, b.id);
-      }
-      return compareIds(a.id, b.id);
-    });
-    return sorted;
+  function sortRows(rows) {
+    return rows.slice().sort((a, b) => compareIds(a.id, b.id));
   }
 
   function renderTabs() {
     const fragment = document.createDocumentFragment();
-    fragment.appendChild(createTabButton("ALL", "All tabs", state.tabCounts.ALL || 0));
+    fragment.appendChild(createTabButton("ALL", "Todas", state.tabCounts.ALL || 0));
     for (const tab of state.tabs) {
       fragment.appendChild(createTabButton(tab, tab, state.tabCounts[tab] || 0));
     }
@@ -384,99 +291,91 @@
     button.setAttribute("role", "tab");
     button.setAttribute("aria-selected", tab === state.activeTab ? "true" : "false");
     button.setAttribute("data-tab", tab);
-    button.textContent = label + " (" + formatNumber(count) + ")";
+
+    if (tab === "ALL") {
+      button.textContent = label + " (" + formatNumber(count) + ")";
+      return button;
+    }
+
+    button.classList.add("with-icon");
+    const content = document.createElement("span");
+    content.className = "tab-content";
+
+    const icon = createTabIconNode(state.tabPreviews[tab] || "");
+
+    const labelWrap = document.createElement("span");
+    labelWrap.className = "tab-label";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "tab-name";
+    nameEl.textContent = label;
+
+    const countEl = document.createElement("span");
+    countEl.className = "tab-count";
+    countEl.textContent = "(" + formatNumber(count) + ")";
+
+    labelWrap.append(nameEl, countEl);
+    content.append(icon, labelWrap);
+    button.appendChild(content);
     return button;
+  }
+
+  function createTabIconNode(path) {
+    if (!path) {
+      return createTabIconPlaceholder();
+    }
+
+    const image = document.createElement("img");
+    image.className = "tab-icon";
+    image.src = path;
+    image.alt = "";
+    image.decoding = "async";
+    image.loading = "lazy";
+    image.addEventListener("error", () => {
+      const fallback = createTabIconPlaceholder();
+      if (image.parentNode) {
+        image.parentNode.replaceChild(fallback, image);
+      }
+    });
+    return image;
+  }
+
+  function createTabIconPlaceholder() {
+    const placeholder = document.createElement("span");
+    placeholder.className = "tab-icon is-empty";
+    placeholder.textContent = "";
+    return placeholder;
   }
 
   function renderControlValues() {
     elements.searchInput.value = state.query;
-    elements.cashFilter.value = state.cashFilter;
-    elements.minLevelInput.value = state.minLevel;
-    elements.sortSelect.value = state.sortBy;
-    renderViewToggle();
-  }
-
-  function renderViewToggle() {
-    const cards = state.viewMode === "cards";
-    elements.cardsViewBtn.classList.toggle("is-active", cards);
-    elements.tableViewBtn.classList.toggle("is-active", !cards);
   }
 
   function renderResults() {
     const total = state.filteredRows.length;
     const shown = Math.min(state.visibleCount, total);
-    const tabLabel = state.activeTab === "ALL" ? "All tabs" : state.activeTab;
+    const tabLabel = state.activeTab === "ALL" ? "Todas as abas" : state.activeTab;
 
     elements.resultsMeta.textContent =
-      formatNumber(total) + " results in " + tabLabel + ". Showing " + formatNumber(shown) + ".";
+      formatNumber(total) + " registro(s) em " + tabLabel + ". Exibindo " + formatNumber(shown) + ".";
 
     if (!total) {
       const empty = document.createElement("div");
       empty.className = "empty-state";
-      empty.textContent = "No records found with current filters.";
+      empty.textContent = "Nenhum registro encontrado para esta busca.";
       elements.resultsRoot.replaceChildren(empty);
       elements.loadMoreBtn.hidden = true;
       return;
     }
 
-    const visibleRows = state.filteredRows.slice(0, shown);
-    if (state.viewMode === "table") {
-      renderTable(visibleRows);
-    } else {
-      renderCards(visibleRows);
-    }
+    renderTable(state.filteredRows.slice(0, shown));
 
     const pending = total - shown;
     elements.loadMoreBtn.hidden = pending <= 0;
     if (pending > 0) {
       const nextChunk = Math.min(state.pageSize, pending);
-      elements.loadMoreBtn.textContent = "Load more (" + formatNumber(nextChunk) + ")";
+      elements.loadMoreBtn.textContent = "Carregar mais (" + formatNumber(nextChunk) + ")";
     }
-  }
-
-  function renderCards(rows) {
-    const grid = document.createElement("div");
-    grid.className = "result-grid";
-
-    rows.forEach((row, index) => {
-      const card = document.createElement("button");
-      card.type = "button";
-      card.className = "result-card" + (row.key === state.selectedKey ? " is-active" : "");
-      card.setAttribute("data-key", row.key);
-      card.style.setProperty("--delay", String((index % 14) * 16) + "ms");
-
-      const thumb = createThumbNode(row.preview, "result-thumb");
-      card.appendChild(thumb);
-
-      const body = document.createElement("div");
-      const meta = document.createElement("p");
-      meta.className = "card-meta";
-      meta.textContent = row.tab + " | " + (row.id || "No ID");
-
-      const title = document.createElement("h3");
-      title.className = "card-title";
-      title.textContent = row.name || "(Unnamed)";
-
-      const snippet = document.createElement("p");
-      snippet.className = "card-snippet";
-      snippet.textContent = buildSnippet(row);
-
-      const chips = document.createElement("div");
-      chips.className = "chip-row";
-      chips.appendChild(createChip(row.isCash ? "Cash" : "Non-cash", row.isCash ? "cash" : "non-cash"));
-      if (row.reqLevel !== null) {
-        chips.appendChild(createChip("Req Lv " + row.reqLevel, "level"));
-      }
-      if (!row.hasPreview) {
-        chips.appendChild(createChip("No Icon", "note"));
-      }
-
-      body.append(meta, title, snippet, chips);
-      card.appendChild(body);
-      grid.appendChild(card);
-    });
-
-    elements.resultsRoot.replaceChildren(grid);
   }
 
   function renderTable(rows) {
@@ -488,7 +387,7 @@
 
     const thead = document.createElement("thead");
     const headRow = document.createElement("tr");
-    const headers = ["Icon", "ID", "Name", "Tab", "Req Lv", "Cash", "Summary"];
+    const headers = ["Icone", "ID", "Nome", "Aba", "Descricao"];
     for (const headerLabel of headers) {
       const th = document.createElement("th");
       th.textContent = headerLabel;
@@ -506,7 +405,7 @@
       }
 
       const iconCell = document.createElement("td");
-      iconCell.appendChild(createThumbNode(row.preview, "result-thumb table-thumb"));
+      iconCell.appendChild(createThumbNode(row.preview, "result-thumb"));
 
       const idCell = document.createElement("td");
       idCell.className = "table-id";
@@ -517,19 +416,13 @@
 
       const tabCell = document.createElement("td");
       tabCell.className = "table-muted";
-      tabCell.textContent = row.tab;
+      tabCell.textContent = row.tab || "-";
 
-      const levelCell = document.createElement("td");
-      levelCell.textContent = row.reqLevel === null ? "-" : String(row.reqLevel);
+      const descCell = document.createElement("td");
+      descCell.className = "table-muted";
+      descCell.textContent = truncate(row.description || "Sem descricao.", 220);
 
-      const cashCell = document.createElement("td");
-      cashCell.textContent = row.isCash ? "Cash" : "No";
-
-      const summaryCell = document.createElement("td");
-      summaryCell.className = "table-muted";
-      summaryCell.textContent = buildSnippet(row);
-
-      tr.append(iconCell, idCell, nameCell, tabCell, levelCell, cashCell, summaryCell);
+      tr.append(iconCell, idCell, nameCell, tabCell, descCell);
       tbody.appendChild(tr);
     }
 
@@ -544,9 +437,9 @@
       const empty = document.createElement("div");
       empty.className = "details-empty";
       const title = document.createElement("h2");
-      title.textContent = "Item Details";
+      title.textContent = "Detalhes";
       const text = document.createElement("p");
-      text.textContent = "Select an item to inspect all exported fields.";
+      text.textContent = "Selecione um registro para ver as informacoes completas.";
       empty.append(title, text);
       elements.detailsPanel.replaceChildren(empty);
       return;
@@ -566,23 +459,17 @@
 
     const name = document.createElement("h2");
     name.className = "details-name";
-    name.textContent = selected.name || "(Unnamed)";
+    name.textContent = selected.name || "Sem nome";
 
     const id = document.createElement("p");
     id.className = "details-id";
     id.textContent = "ID: " + (selected.id || "-");
 
-    const chips = document.createElement("div");
-    chips.className = "chip-row";
-    chips.appendChild(createChip(selected.isCash ? "Cash" : "Non-cash", selected.isCash ? "cash" : "non-cash"));
-    if (selected.reqLevel !== null) {
-      chips.appendChild(createChip("Req Lv " + selected.reqLevel, "level"));
-    }
-    if (!selected.hasPreview) {
-      chips.appendChild(createChip("No Icon", "note"));
-    }
+    const desc = document.createElement("p");
+    desc.className = "details-desc";
+    desc.textContent = selected.description || "Sem descricao.";
 
-    headBody.append(tab, name, id, chips);
+    headBody.append(tab, name, id, desc);
     head.append(thumb, headBody);
     wrapper.appendChild(head);
 
@@ -595,14 +482,14 @@
       }
     }
 
-    const infoEntries = sortInfoEntries(selected.infoMap);
+    const infoEntries = sortObjectEntries(selected.infoMap);
     if (infoEntries.length) {
-      wrapper.appendChild(createDetailsSection("Parsed Info", infoEntries));
+      wrapper.appendChild(createDetailsSection("Info parseada", infoEntries));
     }
 
     const rawEntries = objectEntries(selected.fields);
     if (rawEntries.length) {
-      wrapper.appendChild(createDetailsSection("Raw Fields", rawEntries));
+      wrapper.appendChild(createDetailsSection("Campos brutos", rawEntries));
     }
 
     elements.detailsPanel.replaceChildren(wrapper);
@@ -618,12 +505,12 @@
     const grid = document.createElement("dl");
     grid.className = "kv-grid";
 
-    for (const entry of entries) {
+    for (const [key, value] of entries) {
       const dt = document.createElement("dt");
-      dt.textContent = entry[0];
+      dt.textContent = key;
 
       const dd = document.createElement("dd");
-      dd.textContent = entry[1];
+      dd.textContent = value;
 
       grid.append(dt, dd);
     }
@@ -692,10 +579,6 @@
 
   function resetFilters() {
     state.activeTab = DEFAULTS.activeTab;
-    state.cashFilter = DEFAULTS.cashFilter;
-    state.minLevel = DEFAULTS.minLevel;
-    state.sortBy = DEFAULTS.sortBy;
-    state.viewMode = DEFAULTS.viewMode;
     state.query = DEFAULTS.query;
     renderControlValues();
     applyFilters({ resetVisible: true, keepSelection: false });
@@ -706,25 +589,24 @@
     elements.loadingBar.style.width = progress + "%";
 
     if (total <= 0) {
-      elements.loadingText.textContent = "No data scripts found in manifest.";
+      elements.loadingText.textContent = "Nenhum arquivo encontrado no manifest.";
       return;
     }
 
     const tab = asText(source).split("/")[0];
-    const tabLabel = tab ? " | " + tab : "";
-    elements.loadingText.textContent =
-      "Loading data " + done + "/" + total + tabLabel + " (" + progress + "%)";
+    const tabLabel = tab ? " (" + tab + ")" : "";
+    elements.loadingText.textContent = "Carregando " + done + "/" + total + tabLabel + "...";
   }
 
   function hideLoadingScreen() {
     window.setTimeout(() => {
       elements.loadingScreen.classList.add("is-hidden");
-    }, 180);
+    }, 150);
   }
 
   function handleFatalError(error) {
     console.error(error);
-    const message = "Failed to load data: " + asText(error && error.message ? error.message : error);
+    const message = "Falha ao carregar dados: " + asText(error && error.message ? error.message : error);
     elements.loadingBar.style.width = "100%";
     elements.loadingText.textContent = message;
     elements.loadingScreen.classList.add("is-hidden");
@@ -738,7 +620,7 @@
     const details = document.createElement("div");
     details.className = "details-empty";
     const title = document.createElement("h2");
-    title.textContent = "Load Error";
+    title.textContent = "Erro de carregamento";
     const text = document.createElement("p");
     text.textContent = message;
     details.append(title, text);
@@ -779,7 +661,7 @@
                 return;
               }
               failed = true;
-              reject(new Error("Could not load script: " + src + " | " + err.message));
+              reject(new Error("Nao foi possivel carregar " + src + ": " + err.message));
             });
         }
       };
@@ -802,7 +684,7 @@
         resolve();
       };
       script.onerror = () => {
-        reject(new Error("Network or path error"));
+        reject(new Error("erro de rede ou caminho"));
       };
       document.head.appendChild(script);
     });
@@ -831,22 +713,6 @@
       }
     });
     return image;
-  }
-
-  function createChip(label, tone) {
-    const chip = document.createElement("span");
-    chip.className = "chip " + tone;
-    chip.textContent = label;
-    return chip;
-  }
-
-  function buildSnippet(row) {
-    const primary =
-      asText(row.fields.Description) ||
-      asText(row.fields.Speak) ||
-      asText(row.fields.MapName) ||
-      asText(row.fields.Info);
-    return truncate(primary || "No short description.", 160);
   }
 
   function parseInfoPairs(rawInfo) {
@@ -879,43 +745,10 @@
     return { map, notes };
   }
 
-  function sortInfoEntries(infoMap) {
-    const priority = [
-      "reqLevel",
-      "reqJob",
-      "cash",
-      "price",
-      "tuc",
-      "incSTR",
-      "incDEX",
-      "incINT",
-      "incLUK",
-      "incPAD",
-      "incMAD",
-      "incPDD",
-      "incMDD",
-      "incMHP",
-      "incMMP",
-      "timeLimited",
-      "tradeBlock",
-      "only",
-      "islot",
-      "vslot",
-    ];
-
-    const entries = [];
-    const used = new Set();
-    for (const key of priority) {
-      if (Object.prototype.hasOwnProperty.call(infoMap, key)) {
-        entries.push([key, asText(infoMap[key])]);
-        used.add(key);
-      }
-    }
-    const remaining = Object.keys(infoMap).filter((key) => !used.has(key)).sort();
-    for (const key of remaining) {
-      entries.push([key, asText(infoMap[key])]);
-    }
-    return entries;
+  function sortObjectEntries(input) {
+    return Object.keys(input)
+      .sort((a, b) => a.localeCompare(b, "pt-BR"))
+      .map((key) => [key, asText(input[key])]);
   }
 
   function objectEntries(input) {
@@ -923,8 +756,7 @@
       return [];
     }
     const rows = [];
-    const keys = Object.keys(input);
-    for (const key of keys) {
+    for (const key of Object.keys(input)) {
       rows.push([key, asText(input[key])]);
     }
     return rows;
@@ -963,18 +795,6 @@
     return asText(a).localeCompare(asText(b), "en", { numeric: true, sensitivity: "base" });
   }
 
-  function toNumber(value) {
-    if (value === null || value === undefined || value === "") {
-      return null;
-    }
-    const clean = String(value).replace(/[^\d.-]/g, "");
-    if (!clean) {
-      return null;
-    }
-    const number = Number(clean);
-    return Number.isFinite(number) ? number : null;
-  }
-
   function truncate(text, limit) {
     const value = asText(text).replace(/\s+/g, " ").trim();
     if (value.length <= limit) {
@@ -1001,18 +821,6 @@
     }
     if (state.query) {
       params.set("q", state.query);
-    }
-    if (state.cashFilter !== DEFAULTS.cashFilter) {
-      params.set("cash", state.cashFilter);
-    }
-    if (state.minLevel !== DEFAULTS.minLevel) {
-      params.set("minlvl", state.minLevel);
-    }
-    if (state.sortBy !== DEFAULTS.sortBy) {
-      params.set("sort", state.sortBy);
-    }
-    if (state.viewMode !== DEFAULTS.viewMode) {
-      params.set("view", state.viewMode);
     }
 
     const queryString = params.toString();
