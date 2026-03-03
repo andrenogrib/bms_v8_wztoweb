@@ -47,3 +47,42 @@ The interface syncs query parameters so links can be shared with current state:
 - Data source is loaded from exported local files (`data.js` per tab).
 - No backend required.
 - Best workflow is to keep exports updated and refresh the page.
+
+## Reward.img (Drops / Meso / EXP Reference)
+
+If Harepacker UI fails to export `Reward.img`, you can do it by command line in this repo.
+
+### 1. Export `Reward.img` to JSON
+
+From project root:
+
+```powershell
+tools\RewardExtractor\bin\Release\net9.0-windows\RewardExtractor.exe REWARD\Reward.img REWARD\Reward.export.json
+```
+
+### 2. Normalize and cross data with WEB database
+
+This step links reward drops with mob names/EXP and item names from `WEB/*/data.json`.
+
+```powershell
+node tools\reward-normalize.js
+```
+
+Generated files:
+
+- `REWARD/Reward.normalized.json`: full structure (mob -> drops with names, prob, min/max, meso, exp)
+- `REWARD/Reward.normalized.flat.json`: one row per drop entry (easier to import/query)
+- `REWARD/Reward.unknown-items.json`: item IDs not found in current `WEB` export
+- `REWARD/Reward.normalized.md`: quick human-readable summary
+- `WEB/Reward/drop-index.json`: lightweight index used by the web UI (Mob details panel)
+
+## UI Integration
+
+- In tab `Mob`, selecting a mob now shows **Drops (Reward.img)** in the details panel.
+- In item tabs (`Consume`, `Etc`, `Weapon`, etc.), selecting an item now shows **Dropa de** with:
+  - monster icon (`ICO`)
+  - monster ID
+  - mob name
+  - chance and quantity
+- Data source: `WEB/Reward/drop-index.json`.
+- If the file is missing, the panel shows a load error message without breaking the rest of the app.

@@ -1,6 +1,8 @@
 (() => {
   "use strict";
 
+  const REWARD_DROP_INDEX_PATH = "Reward/drop-index.json";
+
   const DEFAULTS = {
     activeTab: "ALL",
     query: "",
@@ -19,6 +21,14 @@
     visibleCount: 0,
     selectedKey: "",
     loadedScripts: new Set(),
+    itemPreviewById: {},
+    mobLookupById: {},
+    rewardDropsByMob: null,
+    rewardDropsByItem: null,
+    rewardMeta: null,
+    rewardStatus: "idle",
+    rewardError: "",
+    rewardPromise: null,
   };
 
   const elements = {};
@@ -138,6 +148,8 @@
     state.allRows = rows;
     state.tabCounts = buildTabCounts(rows, state.tabs);
     state.tabPreviews = buildTabPreviews(rows, state.tabs);
+    state.itemPreviewById = buildItemPreviewIndex(rows);
+    state.mobLookupById = buildMobLookup(rows);
 
     if (state.activeTab !== "ALL" && !Object.prototype.hasOwnProperty.call(state.tabCounts, state.activeTab)) {
       state.activeTab = "ALL";
@@ -228,6 +240,47 @@
       }
     }
     return previews;
+  }
+
+  function buildItemPreviewIndex(rows) {
+    const index = {};
+    for (const row of rows) {
+      const id = asText(row && row.id).trim();
+      if (!/^\d{8}$/.test(id)) {
+        continue;
+      }
+      const preview = asText(row && row.preview).trim();
+      if (!preview) {
+        continue;
+      }
+      if (!Object.prototype.hasOwnProperty.call(index, id)) {
+        index[id] = preview;
+      }
+    }
+    return index;
+  }
+
+  function buildMobLookup(rows) {
+    const index = {};
+    for (const row of rows) {
+      if (!row || row.tab !== "Mob") {
+        continue;
+      }
+      const id = normalizeMobId(row.id);
+      if (!id) {
+        continue;
+      }
+      if (!Object.prototype.hasOwnProperty.call(index, id)) {
+        index[id] = {
+          id,
+          name: asText(row.name) || id,
+          preview: asText(row.preview) || "",
+          level: parseIntOrNull(row.infoMap && row.infoMap["info.level"]),
+          exp: parseIntOrNull(row.infoMap && row.infoMap["info.exp"]),
+        };
+      }
+    }
+    return index;
   }
 
   function applyFilters(options) {
@@ -412,7 +465,22 @@
       idCell.textContent = row.id || "-";
 
       const nameCell = document.createElement("td");
-      nameCell.textContent = row.name || "-";
+      if (row.tab === "Mob") {
+        const nameMain = document.createElement("div");
+        nameMain.className = "table-name";
+        nameMain.textContent = row.name || "-";
+        nameCell.appendChild(nameMain);
+
+        const mobMetaText = formatMobListMeta(row);
+        if (mobMetaText) {
+          const meta = document.createElement("div");
+          meta.className = "table-submeta";
+          meta.textContent = mobMetaText;
+          nameCell.appendChild(meta);
+        }
+      } else {
+        nameCell.textContent = row.name || "-";
+      }
 
       const tabCell = document.createElement("td");
       tabCell.className = "table-muted";
@@ -492,7 +560,506 @@
       wrapper.appendChild(createDetailsSection("Campos brutos", rawEntries));
     }
 
+    if (selected.tab === "Mob") {
+      wrapper.appendChild(createMobDropSection(selected));
+    }
+
+    if (isDropItemCandidate(selected)) {
+      wrapper.appendChild(createItemDropSection(selected));
+    }
+
     elements.detailsPanel.replaceChildren(wrapper);
+  }
+
+  function createMobDropSection(selected) {
+    const section = document.createElement("section");
+    section.className = "details-section reward-section";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Drops (Reward.img)";
+    section.appendChild(heading);
+
+    if (state.rewardStatus === "idle") {
+      ensureRewardDropsLoaded();
+    }
+
+    if (state.rewardStatus === "loading" || state.rewardStatus === "idle") {
+      const text = document.createElement("p");
+      text.className = "reward-state";
+      text.textContent = "Carregando dados de drop...";
+      section.appendChild(text);
+      return section;
+    }
+
+    if (state.rewardStatus === "error") {
+      const text = document.createElement("p");
+      text.className = "reward-state is-error";
+      text.textContent = "Nao foi possivel carregar " + REWARD_DROP_INDEX_PATH + ".";
+      section.appendChild(text);
+      if (state.rewardError) {
+        const detail = document.createElement("p");
+        detail.className = "reward-state-detail";
+        detail.textContent = state.rewardError;
+        section.appendChild(detail);
+      }
+      return section;
+    }
+
+    const drops = getRewardDropsForMob(selected.id);
+    if (!drops.length) {
+      const text = document.createElement("p");
+      text.className = "reward-state";
+      text.textContent = "Sem referencia de drop para este mob.";
+      section.appendChild(text);
+      return section;
+    }
+
+    const meta = document.createElement("p");
+    meta.className = "reward-state";
+    meta.textContent = formatNumber(drops.length) + " entrada(s) de drop.";
+    section.appendChild(meta);
+
+    const wrap = document.createElement("div");
+    wrap.className = "drop-table-wrap";
+
+    const table = document.createElement("table");
+    table.className = "drop-table";
+
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    for (const header of ["#", "Tipo", "ICO", "Drop", "Chance", "Qtd", "Info"]) {
+      const th = document.createElement("th");
+      th.textContent = header;
+      hr.appendChild(th);
+    }
+    thead.appendChild(hr);
+
+    const tbody = document.createElement("tbody");
+    for (const drop of drops) {
+      const tr = document.createElement("tr");
+
+      const idx = document.createElement("td");
+      idx.textContent = String(Number(drop.index) + 1);
+
+      const kind = document.createElement("td");
+      const badge = document.createElement("span");
+      badge.className = "drop-kind " + (drop.type === "meso" ? "is-meso" : "is-item");
+      badge.textContent = drop.type === "meso" ? "Meso" : "Item";
+      kind.appendChild(badge);
+
+      const ico = document.createElement("td");
+      ico.className = "drop-ico-cell";
+      ico.appendChild(createThumbNode(getDropIconPath(drop), "drop-thumb"));
+
+      const dropCell = document.createElement("td");
+      if (drop.type === "meso") {
+        dropCell.textContent = formatNumber(toNumber(drop.meso)) + " mesos";
+      } else {
+        const itemName = asText(drop.itemName) || "(item desconhecido)";
+        const itemId = asText(drop.itemId);
+        dropCell.textContent = itemName + (itemId ? " (" + itemId + ")" : "");
+      }
+
+      const chance = document.createElement("td");
+      chance.textContent = formatDropChance(drop.prob, drop.probRaw);
+
+      const qty = document.createElement("td");
+      qty.textContent = formatDropQuantity(drop);
+
+      const info = document.createElement("td");
+      info.className = "drop-info";
+      info.textContent = formatDropExtra(drop);
+
+      tr.append(idx, kind, ico, dropCell, chance, qty, info);
+      tbody.appendChild(tr);
+    }
+
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+    section.appendChild(wrap);
+    return section;
+  }
+
+  function createItemDropSection(selected) {
+    const section = document.createElement("section");
+    section.className = "details-section reward-section";
+
+    const heading = document.createElement("h3");
+    heading.textContent = "Dropa de";
+    section.appendChild(heading);
+
+    if (state.rewardStatus === "idle") {
+      ensureRewardDropsLoaded();
+    }
+
+    if (state.rewardStatus === "loading" || state.rewardStatus === "idle") {
+      const text = document.createElement("p");
+      text.className = "reward-state";
+      text.textContent = "Carregando dados de drop...";
+      section.appendChild(text);
+      return section;
+    }
+
+    if (state.rewardStatus === "error") {
+      const text = document.createElement("p");
+      text.className = "reward-state is-error";
+      text.textContent = "Nao foi possivel carregar " + REWARD_DROP_INDEX_PATH + ".";
+      section.appendChild(text);
+      if (state.rewardError) {
+        const detail = document.createElement("p");
+        detail.className = "reward-state-detail";
+        detail.textContent = state.rewardError;
+        section.appendChild(detail);
+      }
+      return section;
+    }
+
+    const itemDrops = getRewardItemDropsForItem(selected.id);
+    if (!itemDrops.length) {
+      const text = document.createElement("p");
+      text.className = "reward-state";
+      text.textContent = "Sem referencia de drop para este item.";
+      section.appendChild(text);
+      return section;
+    }
+
+    const uniqueMobCount = countUniqueMobs(itemDrops);
+    const meta = document.createElement("p");
+    meta.className = "reward-state";
+    meta.textContent =
+      "Dropa de " +
+      formatNumber(uniqueMobCount) +
+      " mob(s), com " +
+      formatNumber(itemDrops.length) +
+      " registro(s) de chance.";
+    section.appendChild(meta);
+
+    const wrap = document.createElement("div");
+    wrap.className = "drop-table-wrap";
+
+    const table = document.createElement("table");
+    table.className = "drop-table";
+
+    const thead = document.createElement("thead");
+    const hr = document.createElement("tr");
+    for (const header of ["#", "ICO", "Monster ID", "Mob", "Chance", "Qtd", "Info"]) {
+      const th = document.createElement("th");
+      th.textContent = header;
+      hr.appendChild(th);
+    }
+    thead.appendChild(hr);
+
+    const tbody = document.createElement("tbody");
+    for (let i = 0; i < itemDrops.length; i += 1) {
+      const drop = itemDrops[i];
+      const tr = document.createElement("tr");
+
+      const idx = document.createElement("td");
+      idx.textContent = String(i + 1);
+
+      const ico = document.createElement("td");
+      ico.className = "drop-ico-cell";
+      ico.appendChild(createThumbNode(getMobIconPath(drop.mobId), "drop-thumb"));
+
+      const mobIdCell = document.createElement("td");
+      mobIdCell.className = "table-id";
+      mobIdCell.textContent = asText(drop.mobId) || "-";
+
+      const mobCell = document.createElement("td");
+      const mobName = document.createElement("div");
+      mobName.className = "drop-mob-name";
+      mobName.textContent = asText(drop.mobName) || "(mob desconhecido)";
+      mobCell.appendChild(mobName);
+
+      const mobMetaText = formatMobMeta(drop);
+      if (mobMetaText) {
+        const mobMeta = document.createElement("div");
+        mobMeta.className = "drop-mob-meta";
+        mobMeta.textContent = mobMetaText;
+        mobCell.appendChild(mobMeta);
+      }
+
+      const chance = document.createElement("td");
+      chance.textContent = formatDropChance(drop.prob, drop.probRaw);
+
+      const qty = document.createElement("td");
+      qty.textContent = formatDropQuantity(drop);
+
+      const info = document.createElement("td");
+      info.className = "drop-info";
+      info.textContent = formatItemDropExtra(drop);
+
+      tr.append(idx, ico, mobIdCell, mobCell, chance, qty, info);
+      tbody.appendChild(tr);
+    }
+
+    table.append(thead, tbody);
+    wrap.appendChild(table);
+    section.appendChild(wrap);
+    return section;
+  }
+
+  function ensureRewardDropsLoaded() {
+    if (state.rewardStatus === "ready") {
+      return Promise.resolve();
+    }
+    if (state.rewardStatus === "loading" && state.rewardPromise) {
+      return state.rewardPromise;
+    }
+    if (state.rewardStatus === "error") {
+      return Promise.reject(new Error(state.rewardError || "load failed"));
+    }
+
+    state.rewardStatus = "loading";
+    state.rewardError = "";
+
+    state.rewardPromise = fetch(REWARD_DROP_INDEX_PATH, { cache: "no-store" })
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error("HTTP " + response.status);
+        }
+        return response.json();
+      })
+      .then((payload) => {
+        const mobMap = payload && typeof payload.mobs === "object" && payload.mobs ? payload.mobs : {};
+        const itemMap = payload && typeof payload.items === "object" && payload.items ? payload.items : {};
+        state.rewardDropsByMob = mobMap;
+        state.rewardDropsByItem = itemMap;
+        state.rewardMeta = payload && payload.meta ? payload.meta : null;
+        state.rewardStatus = "ready";
+      })
+      .catch((error) => {
+        state.rewardDropsByMob = null;
+        state.rewardDropsByItem = null;
+        state.rewardMeta = null;
+        state.rewardStatus = "error";
+        state.rewardError = asText(error && error.message ? error.message : error);
+        throw error;
+      })
+      .finally(() => {
+        state.rewardPromise = null;
+        renderDetails();
+      });
+
+    return state.rewardPromise;
+  }
+
+  function getRewardDropsForMob(mobId) {
+    if (state.rewardStatus !== "ready" || !state.rewardDropsByMob) {
+      return [];
+    }
+    const normalized = normalizeMobId(mobId);
+    const drops = state.rewardDropsByMob[normalized];
+    return Array.isArray(drops) ? drops : [];
+  }
+
+  function getRewardItemDropsForItem(itemId) {
+    if (state.rewardStatus !== "ready" || !state.rewardDropsByItem) {
+      return [];
+    }
+    const normalized = normalizeItemId(itemId);
+    const node = state.rewardDropsByItem[normalized];
+    if (!node) {
+      return [];
+    }
+
+    if (Array.isArray(node)) {
+      return sortItemDropRows(node);
+    }
+
+    if (node && Array.isArray(node.drops)) {
+      return sortItemDropRows(node.drops);
+    }
+
+    return [];
+  }
+
+  function sortItemDropRows(rows) {
+    return rows.slice().sort((a, b) => {
+      const aProb = toNumber(a && a.prob);
+      const bProb = toNumber(b && b.prob);
+      if (Number.isFinite(aProb) && Number.isFinite(bProb) && aProb !== bProb) {
+        return bProb - aProb;
+      }
+      const aMob = asText(a && a.mobId);
+      const bMob = asText(b && b.mobId);
+      return aMob.localeCompare(bMob, "en", { numeric: true, sensitivity: "base" });
+    });
+  }
+
+  function getDropIconPath(drop) {
+    if (!drop || drop.type !== "item") {
+      return "";
+    }
+    const itemId = asText(drop.itemId).trim();
+    if (!itemId) {
+      return "";
+    }
+    return asText(state.itemPreviewById[itemId] || "");
+  }
+
+  function getMobIconPath(mobId) {
+    const normalized = normalizeMobId(mobId);
+    const mob = state.mobLookupById && state.mobLookupById[normalized];
+    return asText((mob && mob.preview) || "");
+  }
+
+  function countUniqueMobs(itemDrops) {
+    const seen = new Set();
+    for (const row of itemDrops) {
+      const mobId = normalizeMobId(row && row.mobId);
+      if (mobId) {
+        seen.add(mobId);
+      }
+    }
+    return seen.size;
+  }
+
+  function formatMobMeta(drop) {
+    const extras = [];
+    const level = parseIntOrNull(drop && drop.mobLevel);
+    const exp = parseIntOrNull(drop && drop.mobExp);
+    if (level !== null) {
+      extras.push("Lv " + formatNumber(level));
+    }
+    if (exp !== null) {
+      extras.push("EXP " + formatNumber(exp));
+    }
+    return extras.join(" | ");
+  }
+
+  function formatItemDropExtra(drop) {
+    const extras = [];
+    const premium = toNumber(drop && drop.premium);
+    if (Number.isFinite(premium) && premium > 0) {
+      extras.push("premium " + premium);
+    }
+    const period = toNumber(drop && drop.period);
+    if (Number.isFinite(period) && period > 0) {
+      extras.push("periodo " + period + "d");
+    }
+    const dateExpire = formatDropDateExpire(drop && drop.dateExpire);
+    if (dateExpire) {
+      extras.push("expira " + dateExpire);
+    }
+    return extras.length ? extras.join(" | ") : "-";
+  }
+
+  function formatMobListMeta(row) {
+    if (!row || row.tab !== "Mob") {
+      return "";
+    }
+    const level = parseIntOrNull(row.infoMap && row.infoMap["info.level"]);
+    const exp = parseIntOrNull(row.infoMap && row.infoMap["info.exp"]);
+    const extras = [];
+    if (level !== null) {
+      extras.push("Lv " + formatNumber(level));
+    }
+    if (exp !== null) {
+      extras.push("EXP " + formatNumber(exp));
+    }
+    return extras.join(" | ");
+  }
+
+  function isDropItemCandidate(selected) {
+    if (!selected || selected.tab === "Mob") {
+      return false;
+    }
+    const id = asText(selected.id).trim();
+    return /^\d{8}$/.test(id);
+  }
+
+  function normalizeMobId(id) {
+    const raw = asText(id).trim();
+    if (!/^\d+$/.test(raw)) {
+      return raw;
+    }
+    return raw.padStart(7, "0");
+  }
+
+  function normalizeItemId(id) {
+    const raw = asText(id).trim();
+    if (!/^\d+$/.test(raw)) {
+      return raw;
+    }
+    return raw.padStart(8, "0");
+  }
+
+  function formatDropChance(prob, probRaw) {
+    const n = toNumber(prob);
+    if (!Number.isFinite(n)) {
+      return asText(probRaw) || "-";
+    }
+    const percent = n * 100;
+    const fixed = percent >= 1 ? 2 : percent >= 0.1 ? 3 : 4;
+    return trimDecimal(percent.toFixed(fixed)) + "%";
+  }
+
+  function formatDropQuantity(drop) {
+    const min = toNumber(drop.min);
+    const max = toNumber(drop.max);
+    if (Number.isFinite(min) && Number.isFinite(max)) {
+      if (min === max) {
+        return formatNumber(min);
+      }
+      return formatNumber(min) + " - " + formatNumber(max);
+    }
+    if (Number.isFinite(min)) {
+      return ">= " + formatNumber(min);
+    }
+    if (Number.isFinite(max)) {
+      return "<= " + formatNumber(max);
+    }
+    return "1";
+  }
+
+  function formatDropExtra(drop) {
+    const extras = [];
+    if (asText(drop.itemTab)) {
+      extras.push("tab " + drop.itemTab);
+    }
+    const premium = toNumber(drop.premium);
+    if (Number.isFinite(premium) && premium > 0) {
+      extras.push("premium " + premium);
+    }
+    const period = toNumber(drop.period);
+    if (Number.isFinite(period) && period > 0) {
+      extras.push("periodo " + period + "d");
+    }
+    const dateExpire = formatDropDateExpire(drop.dateExpire);
+    if (dateExpire) {
+      extras.push("expira " + dateExpire);
+    }
+    return extras.length ? extras.join(" | ") : "-";
+  }
+
+  function formatDropDateExpire(value) {
+    const text = asText(value).trim();
+    if (!text || !/^\d{8,10}$/.test(text)) {
+      return "";
+    }
+    const yyyy = text.slice(0, 4);
+    const mm = text.slice(4, 6);
+    const dd = text.slice(6, 8);
+    if (text.length >= 10) {
+      const hh = text.slice(8, 10);
+      return yyyy + "-" + mm + "-" + dd + " " + hh + ":00";
+    }
+    return yyyy + "-" + mm + "-" + dd;
+  }
+
+  function trimDecimal(text) {
+    return asText(text).replace(/\.?0+$/, "");
+  }
+
+  function toNumber(value) {
+    const n = Number(value);
+    return Number.isFinite(n) ? n : NaN;
+  }
+
+  function parseIntOrNull(value) {
+    const n = Number.parseInt(asText(value).trim(), 10);
+    return Number.isFinite(n) ? n : null;
   }
 
   function createDetailsSection(title, entries) {
